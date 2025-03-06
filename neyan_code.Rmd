@@ -1,0 +1,226 @@
+```{r}
+library(dplyr)
+library(ggplot2)
+library(scatterplot3d)
+library(patchwork)
+library(lme4)
+library(mice)
+library(geepack)
+library(gee)
+library(tidyr)
+library(foreign)
+library(haven)
+library(car)
+library(reshape2)
+library(sjPlot)
+library(sjmisc)
+library(sjlabelled)
+library(ordinal)
+```
+
+```{r}
+load('/Users/neyandeng/Desktop/2024FALL/BIOSTAT653/project/data2/DS0001/37067-0001-Data.rda')
+load('/Users/neyandeng/Desktop/2024FALL/BIOSTAT653/project/data2/DS0002/37067-0002-Data.rda')
+load('/Users/neyandeng/Desktop/2024FALL/BIOSTAT653/project/data2/DS0003/37067-0003-Data.rda')
+load('/Users/neyandeng/Desktop/2024FALL/BIOSTAT653/project/data2/DS0004/37067-0004-Data.rda')
+```
+
+
+```{r}
+
+# Merge all data
+data1 <- da37067.0001
+data2 <- da37067.0002
+data3 <- da37067.0003
+data4 <- da37067.0004
+
+data4 <- data4[, colSums(is.na(data4)) < nrow(data4)]
+common_columns <- Reduce(intersect, list(names(data1), names(data2), names(data3), names(data4)))
+data1 <- data1[, common_columns]
+data2 <- data2[, common_columns]
+data3 <- data3[, common_columns]
+data4 <- data4[, common_columns]
+
+data1 <- data1[rowSums(is.na(data1)) != ncol(data1), ]
+data2 <- data2[rowSums(is.na(data2)) != ncol(data2), ]
+data3 <- data3[rowSums(is.na(data3)) != ncol(data3), ]
+data4 <- data4[rowSums(is.na(data4)) != ncol(data4), ]
+
+data2$AGE <- data2$AGE + 0.5
+data3$AGE <- data3$AGE + 1
+data4$AGE <- data4$AGE +1.5
+
+combined_data <- rbind(data1, data2, data3, data4)
+combined_data <- combined_data[order(combined_data$CASEID), ]
+combined_data$WAVE <- as.numeric(gsub("\\(\\d+\\) Wave ", "", combined_data$WAVE))
+
+common_caseids <- Reduce(intersect, list(data1$CASEID, data2$CASEID, data3$CASEID, data4$CASEID))
+data1 <- data1[data1$CASEID %in% common_caseids, ]
+data2 <- data2[data2$CASEID %in% common_caseids, ]
+data3 <- data3[data3$CASEID %in% common_caseids, ]
+data4 <- data4[data4$CASEID %in% common_caseids, ]
+combined_data <- rbind(data1, data2, data3, data4)
+combined_data <- combined_data[order(combined_data$CASEID), ]
+combined_data$WAVE <- as.numeric(gsub("\\(\\d+\\) Wave ", "", combined_data$WAVE))
+
+```
+
+```{r}
+# Variables -> number
+combined_data$MARSTAT <- gsub("\\((\\d+)\\) .*", "\\1", combined_data$MARSTAT)
+combined_data$FEELPG <- gsub("\\((\\d+)\\) .*", "\\1", combined_data$FEELPG)
+combined_data$INTEND <- gsub("\\((\\d+)\\) .*", "\\1", combined_data$INTEND)
+combined_data$RPAVOID <- gsub("\\((\\d+)\\) .*", "\\1", combined_data$RPAVOID)
+combined_data$RACETH <- gsub("\\((\\d+)\\) .*", "\\1", combined_data$RACETH)
+combined_data$DEGREE <- gsub("\\((\\d+)\\) .*", "\\1", combined_data$DEGREE)
+combined_data$HHINC <- gsub("\\((\\d+)\\) .*", "\\1", combined_data$HHINC)
+# INTEND -> LEVEL
+combined_data <- combined_data %>%
+  mutate(INTEND = case_when(
+    INTEND == 3 ~ 1,
+    INTEND == 4 ~ 2,
+    INTEND == 2 ~ 3,
+    INTEND == 1 ~ 4,
+    INTEND == 5 ~ 5,
+    TRUE ~ as.numeric(INTEND) 
+  ))
+# Time -> number
+combined_data$occasion <- NA
+combined_data$occasion[grepl("01-NOV-2012|01-DEC-2012", combined_data$TM_START)] <- 1
+combined_data$occasion[grepl("01-MAY-2013|01-JUN-2013", combined_data$TM_START)] <- 2
+combined_data$occasion[grepl("01-NOV-2013|01-DEC-2013", combined_data$TM_START)] <- 3
+combined_data$occasion[grepl("01-JUN-2014|01-MAY-2014", combined_data$TM_START)] <- 4
+# Factor
+combined_data$occasion <- as.factor(combined_data$occasion)
+combined_data$MARSTAT <- as.factor(combined_data$MARSTAT)
+
+# CPUSE combine
+combined_data$CPUSE[combined_data$CPUSE %in% c(0, 5)] <- 0
+# Household_Members
+combined_data <- combined_data %>%
+  mutate(HOUSEMEM = rowSums(select(.,INFANTS,TODDLERS,NADULTS, KIDS, TEENS), na.rm = TRUE))
+# HOUR WORKING
+combined_data <- combined_data %>%
+  mutate(HOURTOT = rowSums(select(.,HOURED,HOUREMP), na.rm = TRUE))
+# Change into numeric or factor
+combined_data$HHINC <- as.numeric(combined_data$HHINC)
+combined_data$DEGREE <- as.numeric(combined_data$DEGREE)
+combined_data$FEELPG <- as.numeric(combined_data$FEELPG)
+combined_data$RACETH <- as.factor(combined_data$RACETH)
+combined_data$HOURTOT <- as.numeric(combined_data$HOURTOT)
+#combined_data$CASEID <- as.factor(combined_data$CASEID)
+combined_data$HOUSEMEM <- as.numeric(combined_data$HOUSEMEM)
+```
+
+```{r}
+# Select data
+select_V <- c("CASEID","AGE","MARSTAT","occasion","INTEND"
+              ,"RACETH","HOUSEMEM","DEGREE","HHINC","HOURTOT") 
+
+combined_data <- combined_data %>% select(select_V)
+str(combined_data)
+#colSums(is.na(combined_data))
+#combined_data$INTEND[is.na(combined_data$INTEND)] <- 1
+colSums(is.na(combined_data))
+```
+
+```{r}
+imputed_data <- mice(combined_data, m = 5, method = 'pmm', seed = 123)
+combined_data <- complete(imputed_data)
+colSums(is.na(combined_data))
+```
+
+
+# Model1
+```{r}
+combined_data$AGE <- scale(combined_data$AGE)
+combined_data$HHINC <- scale(combined_data$HHINC)
+combined_data$HOURTOT <- scale(combined_data$HOURTOT)
+clmm_model_1 <- clmm(
+  formula = ordered(INTEND) ~ HOURTOT + (1 | CASEID) + (1 | occasion),
+  data = combined_data,
+  link = "logit"
+)
+summary(clmm_model_1)
+tab_model(clmm_model_1,digits = 5)
+VarCorr(clmm_model_1)
+```
+# Model2
+```{r}
+combined_data$HOURTOT_sq <- combined_data$HOURTOT^2
+clmm_model_2 <- clmm(
+  formula = ordered(INTEND) ~ HOURTOT + HOURTOT_sq + (1 | CASEID) + (1 | occasion),
+  data = combined_data,
+  link = "logit"
+)
+summary(clmm_model_2)
+tab_model(clmm_model_2,digits = 5)
+VarCorr(clmm_model_2)
+```
+
+# Model3
+```{r}
+clmm_model_3 <- clmm(
+  formula = ordered(INTEND) ~ HOURTOT + HOURTOT_sq + AGE + MARSTAT + RACETH + HOUSEMEM + DEGREE + HHINC + (1 | CASEID) + (1 | occasion),
+  data = combined_data,
+  link = "logit"
+)
+summary(clmm_model_3)
+tab_model(clmm_model_3,digits = 5)
+VarCorr(clmm_model_3)
+```
+# Model4
+```{r}
+combined_data$AGE_sq <- combined_data$AGE^2
+clmm_model_4 <- clmm(
+  formula = ordered(INTEND) ~ HOURTOT + HOURTOT_sq + AGE + AGE_sq + MARSTAT + RACETH + HOUSEMEM + DEGREE + HHINC + HHINC:AGE + HHINC:HOURTOT + MARSTAT:AGE + (1 | CASEID) + (1 | occasion),
+  data = combined_data,
+  link = "logit",
+  control = clmm.control(maxIter = 1000, gradTol = 1e-3)
+)
+summary(clmm_model_4)
+tab_model(clmm_model_4,digits = 5)
+VarCorr(clmm_model_4)
+```
+
+
+```{r}
+anova(clmm_model_1, clmm_model_2)
+anova(clmm_model_2, clmm_model_3)
+anova(clmm_model_3, clmm_model_4)
+```
+
+```{r}
+# 提取系数和协方差矩阵
+beta_est <- matrix(clmm_model_3$beta,ncol=1)
+beta_names <- names(clmm_model_3$beta)
+
+# 提取协方差矩阵对应部分
+vcov_matrix <- vcov(clmm_model_3)[beta_names, beta_names]
+
+# 设置约束矩阵 L
+L <- matrix(0, nrow = 2, ncol = length(beta_est))
+colnames(L) <- names(beta_est)
+L[1, "AGE:HHINC"] <- 1         # 检验 HHINC:AGE
+L[2, "HOURTOT:HHINC"] <- 1     # 检验 HHINC:HOURTOT
+
+# 计算 Wald Test 统计量
+wald_stat <- t(L %*% beta_est) %*% solve(L %*% vcov_matrix %*% t(L)) %*% (L %*% beta_est)
+
+# 计算 p 值
+df <- nrow(L)
+p_value <- 1 - pchisq(wald_stat, df)
+
+# 打印结果
+cat("Wald Statistic:", wald_stat, "\n")
+cat("p-value:", p_value, "\n")
+
+```
+
+```{r}
+library(car)
+library(MASS)
+combined_data$INTEND <- as.numeric(as.character(combined_data$INTEND))
+vif(polr(ordered(INTEND) ~ AGE + MARSTAT + RACETH + HOUSEMEM + DEGREE + HHINC + HOURTOT + AGE_sq + HOURTOT_sq, data = combined_data))
+```
+
